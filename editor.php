@@ -1,15 +1,22 @@
 <?php
 // pages/editor.php
+session_start();
 
-// 1. Session & Config
-if (session_status() === PHP_SESSION_NONE) session_start();
-// require_once '../includes/config.php';
-// require_once '../includes/auth.php';
-// require_login();
-// check_permission('file_management');
+// 1. Security Check & Root Path Configuration
+// (Matches index.php logic exactly)
+if (!isset($_SESSION["client_user"]) && !isset($_SESSION["admin_user"])) {
+    die("Access Denied: Please log in.");
+}
 
-global $pdo;
-$user_id = $_SESSION['user_id'] ?? 0;
+// Define Root Path based on session
+if (isset($_SESSION["admin_user"])) {
+    $root_path = "/var/www/clients";
+    $user_label = "Administrator";
+} else {
+    $cuser = $_SESSION["client_user"];
+    $root_path = "/var/www/clients/$cuser";
+    $user_label = $cuser;
+}
 
 // 2. Helpers (Security & Paths)
 function shm_normalize_path($path) {
@@ -28,63 +35,60 @@ function shm_build_safe_path($base, $relative) {
     $base = rtrim(str_replace('\\', '/', $base), '/');
     $relative = shm_normalize_path($relative);
     $full = $base . $relative;
+    
     // Security check: ensure path is inside base
+    // Also checks if file actually exists to resolve realpath symlinks if needed
+    if (file_exists($full)) {
+        $real = realpath($full);
+        if ($real === false || strpos($real, $base) !== 0) {
+            return false;
+        }
+        return $real;
+    }
+    
+    // If it doesn't exist (shouldn't happen in editor), check string path
     if (strpos($full, $base) !== 0) return false;
     return $full;
 }
 
 // 3. Inputs
-$domain_id = isset($_GET['domain_id']) ? (int)$_GET['domain_id'] : 0;
-$file_rel  = isset($_GET['file']) ? $_GET['file'] : '';
+$file_rel = isset($_GET['file']) ? $_GET['file'] : '';
 
-// 4. Validation
-if (!$domain_id || empty($file_rel)) {
-    die("Invalid parameters.");
+// 4. Validation & Path Building
+if (empty($file_rel)) {
+    die("Invalid parameters: No file specified.");
 }
 
-// 5. Fetch Domain Info
-$stmt = $pdo->prepare("SELECT domain_name, document_root FROM domains WHERE id = ? AND user_id = ?");
-$stmt->execute([$domain_id, $user_id]);
-$domain = $stmt->fetch(PDO::FETCH_ASSOC);
+$file_path = shm_build_safe_path($root_path, $file_rel);
 
-if (!$domain) {
-    die("Domain not found or access denied.");
+if (!$file_path || !file_exists($file_path)) {
+    die("File not found or access denied: " . htmlspecialchars($file_rel));
 }
 
-$file_path = shm_build_safe_path($domain['document_root'], $file_rel);
-
-// 6. Handle AJAX Save (POST)
+// 5. Handle AJAX Save (POST)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
     
-    // Read input stream for raw content (better for large files/special chars)
+    // Read input stream for raw content
     $content = file_get_contents('php://input');
     
-    if ($file_path && file_exists($file_path)) {
-        if (!is_writable($file_path)) {
-            echo json_encode(['success' => false, 'message' => 'File is not writable (Check permissions)']);
-            exit;
-        }
-        
-        if (file_put_contents($file_path, $content) !== false) {
-            echo json_encode(['success' => true, 'message' => 'Saved successfully at ' . date('H:i:s')]);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to write to disk']);
-        }
+    if (!is_writable($file_path)) {
+        echo json_encode(['success' => false, 'message' => 'File is read-only (Permission denied)']);
+        exit;
+    }
+    
+    if (file_put_contents($file_path, $content) !== false) {
+        echo json_encode(['success' => true, 'message' => 'Saved successfully at ' . date('H:i:s')]);
     } else {
-        echo json_encode(['success' => false, 'message' => 'File does not exist']);
+        echo json_encode(['success' => false, 'message' => 'Failed to write to disk']);
     }
     exit;
 }
 
-// 7. Read File Content (GET)
-if (!$file_path || !file_exists($file_path)) {
-    die("File not found: " . htmlspecialchars($file_rel));
-}
-
+// 6. Read File Content (GET)
 // Max file size check (e.g., 2MB) to prevent browser crash
 if (filesize($file_path) > 2 * 1024 * 1024) {
-    die("File is too large to edit in the browser.");
+    die("File is too large ( > 2MB) to edit in the browser.");
 }
 
 $content = file_get_contents($file_path);
@@ -103,7 +107,10 @@ $modes = [
     'txt' => 'text',
     'htaccess' => 'apache_conf',
     'py' => 'python',
-    'yml' => 'yaml', 'yaml' => 'yaml'
+    'yml' => 'yaml', 'yaml' => 'yaml',
+    'ini' => 'ini',
+    'conf' => 'ini',
+    'sh' => 'sh'
 ];
 $editor_mode = $modes[$extension] ?? 'text';
 ?>
@@ -121,8 +128,8 @@ $editor_mode = $modes[$extension] ?? 'text';
     
     <style>
         :root { 
-            --primary: #4f46e5; 
-            --primary-dark: #4338ca; 
+            --primary: #3b82f6; 
+            --primary-dark: #2563eb; 
             --bg-dark: #1e1e1e; 
             --text-light: #e5e7eb; 
             --border-dark: #374151;
@@ -130,7 +137,7 @@ $editor_mode = $modes[$extension] ?? 'text';
         }
         
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; height: 100vh; background: var(--bg-dark); color: var(--text-light); overflow: hidden; }
+        body { font-family: 'Poppins', system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; height: 100vh; background: var(--bg-dark); color: var(--text-light); overflow: hidden; }
         
         /* HEADER / TOOLBAR */
         .editor-header {
@@ -155,11 +162,10 @@ $editor_mode = $modes[$extension] ?? 'text';
         .btn-primary:hover { background: var(--primary-dark); }
         .btn-secondary { background: #374151; color: #e5e7eb; }
         .btn-secondary:hover { background: #4b5563; }
-        .btn-text { background: transparent; color: #9ca3af; }
-        .btn-text:hover { color: white; }
-
+        
+        /* Settings Dropdowns */
         .settings-group { display: flex; gap: 5px; border-left: 1px solid #4b5563; padding-left: 10px; margin-left: 5px; }
-        select { background: #374151; color: white; border: 1px solid #4b5563; padding: 4px; border-radius: 4px; font-size: 12px; outline: none; }
+        select { background: #374151; color: white; border: 1px solid #4b5563; padding: 4px; border-radius: 4px; font-size: 12px; outline: none; cursor: pointer; }
 
         /* EDITOR AREA */
         #editor { flex: 1; width: 100%; height: calc(100vh - 80px); }
@@ -201,7 +207,7 @@ $editor_mode = $modes[$extension] ?? 'text';
             <span style="font-weight: 600;"><?= htmlspecialchars(basename($file_path)) ?></span>
             <span class="file-path"><?= htmlspecialchars(dirname($file_rel)) ?>/</span>
             <?php if(!$is_writable): ?>
-                <span class="readonly-badge"><i class="fas fa-lock"></i> Read Only</span>
+                <span class="readonly-badge" title="You do not have permission to write to this file"><i class="fas fa-lock"></i> Read Only</span>
             <?php endif; ?>
             <span id="unsavedIndicator" style="display:none; color: #facc15; font-size: 12px;">● Unsaved changes</span>
         </div>
@@ -221,12 +227,16 @@ $editor_mode = $modes[$extension] ?? 'text';
                     <option value="14" selected>14px</option>
                     <option value="16">16px</option>
                     <option value="18">18px</option>
+                    <option value="20">20px</option>
                 </select>
             </div>
 
+            <?php if($is_writable): ?>
             <button class="btn btn-primary" onclick="saveFile()" id="saveBtn">
                 <i class="fas fa-save"></i> Save
             </button>
+            <?php endif; ?>
+            
             <button class="btn btn-secondary" onclick="window.close()">
                 <i class="fas fa-times"></i> Close
             </button>
@@ -239,7 +249,8 @@ $editor_mode = $modes[$extension] ?? 'text';
     <!-- Status Bar -->
     <footer class="status-bar">
         <div class="status-left">
-            <span><i class="fas fa-code-branch"></i> <?= htmlspecialchars($domain['domain_name']) ?></span>
+            <span><i class="fas fa-user-circle"></i> <?= htmlspecialchars($user_label) ?></span>
+            <span><i class="fas fa-hdd"></i> <?= format_file_size(filesize($file_path)) ?></span>
         </div>
         <div class="status-right">
             <span id="cursorPos">Ln 1, Col 1</span>
@@ -259,6 +270,7 @@ $editor_mode = $modes[$extension] ?? 'text';
         editor.setFontSize(14);
         editor.setShowPrintMargin(false);
         editor.session.setUseWrapMode(true);
+        editor.setReadOnly(<?= $is_writable ? 'false' : 'true' ?>);
         editor.setOptions({
             enableBasicAutocompletion: true,
             enableLiveAutocompletion: true
@@ -274,7 +286,7 @@ $editor_mode = $modes[$extension] ?? 'text';
             }
         });
 
-        // 3. Status Bar Logic (Cursor Position)
+        // 3. Status Bar Logic
         editor.selection.on('changeCursor', function() {
             var pos = editor.selection.getCursor();
             document.getElementById('cursorPos').innerText = "Ln " + (pos.row + 1) + ", Col " + (pos.column + 1);
@@ -283,6 +295,8 @@ $editor_mode = $modes[$extension] ?? 'text';
         // 4. Save Logic (AJAX)
         function saveFile() {
             var btn = document.getElementById('saveBtn');
+            if(!btn) return;
+
             var originalText = btn.innerHTML;
             
             // UI Loading state
@@ -293,7 +307,10 @@ $editor_mode = $modes[$extension] ?? 'text';
 
             fetch(window.location.href, {
                 method: 'POST',
-                body: content // Send raw string body
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: content 
             })
             .then(response => response.json())
             .then(data => {
@@ -342,6 +359,7 @@ $editor_mode = $modes[$extension] ?? 'text';
         }
 
         // 7. Keybinds (Ctrl+S)
+        <?php if($is_writable): ?>
         editor.commands.addCommand({
             name: 'save',
             bindKey: {win: 'Ctrl-S',  mac: 'Command-S'},
@@ -350,6 +368,7 @@ $editor_mode = $modes[$extension] ?? 'text';
             },
             readOnly: false
         });
+        <?php endif; ?>
 
         // 8. Prevent accidental close
         window.onbeforeunload = function() {
@@ -360,3 +379,15 @@ $editor_mode = $modes[$extension] ?? 'text';
     </script>
 </body>
 </html>
+<?php
+/**
+ * Helper: nice file size (Duplicate from index.php to keep this file standalone)
+ */
+function format_file_size($bytes) {
+    if (!is_numeric($bytes) || $bytes <= 0) return '0 B';
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $power = floor(log($bytes, 1024));
+    $power = min($power, count($units) - 1);
+    return round($bytes / pow(1024, $power), 2) . ' ' . $units[$power];
+}
+?>
