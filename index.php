@@ -1326,6 +1326,7 @@ if ($search_query !== '') {
                 <div class="brand-title">FileManager</div>
                 <div class="brand-subtitle">Secure & Simple</div>
             </div>
+            
         </div>
 
         <ul>
@@ -1333,12 +1334,6 @@ if ($search_query !== '') {
                 <a href="index.php?path=%2F" class="active">
                     <span class="nav-icon"><i class="fas fa-folder-open"></i></span>
                     <span>Files</span>
-                </a>
-            </li>
-            <li>
-                <a href="#" onclick="refreshPage()">
-                    <span class="nav-icon"><i class="fas fa-sync-alt"></i></span>
-                    <span>Refresh</span>
                 </a>
             </li>
         </ul>
@@ -1353,7 +1348,7 @@ if ($search_query !== '') {
     <main class="main-content">
         <div class="page-container">
             <!-- HEADER -->
-            <section class="header">
+            <!--section class="header">
                 <div class="header-left">
                     <div class="page-title">File Management</div>
                     <div class="page-subtitle">
@@ -1377,7 +1372,7 @@ if ($search_query !== '') {
                         </div>
                     </div>
                 </div>
-            </section>
+            </section-->
 
             <!-- ALERTS -->
             <?php if (isset($_GET['success'])): ?>
