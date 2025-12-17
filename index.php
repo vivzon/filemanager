@@ -26,12 +26,11 @@ ini_set("display_errors", 1);
 ini_set("display_startup_errors", 1);
 error_reporting(E_ALL);
 
-// --- UPDATE: Increased limits for 2GB uploads ---
-ini_set('upload_max_filesize', '2G');
-ini_set('post_max_size', '2G');
-ini_set('max_execution_time', '1200'); // 20 minutes for large files
-ini_set('max_input_time', '1200');
-ini_set('memory_limit', '512M');
+// Increase file size limits for this script
+ini_set('upload_max_filesize', '500M');
+ini_set('post_max_size', '500M');
+ini_set('max_execution_time', '300');
+ini_set('max_input_time', '300');
 
 // MAPPING: Map your root_path to the file manager's base_path variable
 $base_path = rtrim($root_path, '/');
@@ -354,16 +353,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $failed = 0;
         $errors = [];
         
-        // LIMIT: 2GB in Bytes
-        $max_size_bytes = 2 * 1024 * 1024 * 1024;
-
         foreach ($_FILES['files']['name'] as $key => $name) {
             if ($_FILES['files']['error'][$key] === UPLOAD_ERR_OK) {
                 $target_file = $target_dir . basename($name);
                 
-                if ($_FILES['files']['size'][$key] > $max_size_bytes) {
+                if ($_FILES['files']['size'][$key] > 500 * 1024 * 1024) {
                     $failed++;
-                    $errors[] = "File '$name' exceeds 2GB limit.";
+                    $errors[] = "File '$name' is too large.";
                     continue;
                 }
                 
@@ -584,14 +580,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target_abs    = shm_build_path($base_path, $file_path_rel);
         
         if ($target_abs !== false && file_exists($target_abs)) {
-            // Extract to a folder named after the zip file
             $extract_to = dirname($target_abs) . '/' . pathinfo($target_abs, PATHINFO_FILENAME);
             if (shm_extract_zip($target_abs, $extract_to)) {
-                header('Location: index.php?path=' . urlencode($current_path) . '&success=' . urlencode('File unzipped successfully to folder: ' . basename($extract_to)));
+                header('Location: index.php?path=' . urlencode($current_path) . '&success=' . urlencode('File unzipped successfully'));
                 exit;
             }
         }
-        header('Location: index.php?path=' . urlencode($current_path) . '&error=' . urlencode('Failed to unzip file. Ensure Zip extension is enabled.'));
+        header('Location: index.php?path=' . urlencode($current_path) . '&error=' . urlencode('Failed to unzip file'));
         exit;
     }
 
@@ -1352,7 +1347,33 @@ if ($search_query !== '') {
     <!-- MAIN -->
     <main class="main-content">
         <div class="page-container">
-            
+            <!-- HEADER -->
+            <!--section class="header">
+                <div class="header-left">
+                    <div class="page-title">File Management</div>
+                    <div class="page-subtitle">
+                        <?php echo htmlspecialchars($root_path); ?>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <span class="chip chip-live">
+                        <i class="fas fa-circle"></i> Connected
+                    </span>
+                    <div class="user-info">
+                        <div class="user-avatar">
+                            <?php 
+                                $u = isset($_SESSION['admin_user']) ? 'Admin' : ($_SESSION['client_user'] ?? 'U');
+                                echo strtoupper(substr($u, 0, 1)); 
+                            ?>
+                        </div>
+                        <div class="user-meta">
+                            <span class="user-name"><?php echo htmlspecialchars($u); ?></span>
+                            <span class="user-role"><?php echo isset($_SESSION['admin_user']) ? 'Administrator' : 'Client User'; ?></span>
+                        </div>
+                    </div>
+                </div>
+            </section-->
+
             <!-- ALERTS -->
             <?php if (isset($_GET['success'])): ?>
                 <div class="alert alert-success">
@@ -1486,9 +1507,6 @@ if ($search_query !== '') {
                                         $fa_icon = 'fa-file-code';
                                         $color = '#3b82f6';
                                     }
-                                    
-                                    // Check if it's a zip to show unzip button
-                                    $isZipFile = !$isDir && strtolower($f['extension']) === 'zip';
                                     ?>
                                     <tr ondblclick="<?php echo $isDir ? 'window.location=\'index.php?path=' . urlencode($rel . '/') . '\'' : 'window.open(\'editor.php?file=' . urlencode($rel) . '\', \'_blank\')'; ?>"
                                         oncontextmenu="showContextMenu(event, '<?php echo htmlspecialchars(addslashes($rel)); ?>', '<?php echo htmlspecialchars(addslashes($name)); ?>', '<?php echo $isDir ? 'dir' : 'file'; ?>')">
@@ -1512,14 +1530,6 @@ if ($search_query !== '') {
                                         <td><?php echo htmlspecialchars($f['modified']); ?></td>
                                         <td>
                                             <div class="file-actions">
-                                                <?php if($isZipFile): ?>
-                                                    <button class="btn btn-icon btn-sm" 
-                                                            onclick="unzipItem('<?php echo htmlspecialchars(addslashes($rel)); ?>')"
-                                                            title="Unzip Here">
-                                                        <i class="fas fa-expand-arrows-alt" style="color: var(--primary);"></i>
-                                                    </button>
-                                                <?php endif; ?>
-                                                
                                                 <button class="btn btn-icon btn-sm" 
                                                         onclick="downloadItem('<?php echo htmlspecialchars(addslashes($rel)); ?>')"
                                                         title="Download">
@@ -1645,7 +1655,7 @@ if ($search_query !== '') {
             modalTitle.innerHTML = '<i class="fas fa-upload"></i> Upload Files';
             modalBody.innerHTML = `
                 <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-                    Maximum file size: 2GB. Drag and drop or click to select files.
+                    Maximum file size: 500MB. Drag and drop or click to select files.
                 </p>
                 <div class="upload-dropzone" id="dropzone" onclick="document.getElementById('file-input-ajax').click()">
                     <i class="fas fa-cloud-upload-alt"></i>
@@ -1789,8 +1799,7 @@ if ($search_query !== '') {
             contextMenuFileType = fileType;
             
             const contextMenu = document.getElementById('contextMenu');
-            // Check case-insensitive zip extension
-            const isZip = fileType === 'file' && fileName.toLowerCase().endsWith('.zip');
+            const isZip = fileType === 'file' && fileName.endsWith('.zip');
             
             contextMenu.innerHTML = `
                 <div class="context-menu-item" onclick="contextMenuDownload()"><i class="fas fa-download"></i> Download</div>
